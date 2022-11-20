@@ -1,9 +1,9 @@
 blueprint:
   domain: automation
-  name: Popp TRV Ext Temp Z2M
-  description: Update DPopp TRV external temperature with min/max refresh rate, via zigbee2mqtt
+  name: Popp TRV External Temperature Z2M
+  description: Update Popp TRV external temperature with min/max refresh rate, via zigbee2mqtt
   input:
-    ally_device:
+    popp_device:
       name: Popp TRV Device
       description: Temperature reading will be sent to this device
       selector:
@@ -29,7 +29,7 @@ blueprint:
         entity:
           domain: timer
 variables:
-  device: !input ally_device
+  device: !input popp_device
   temp_sensor_id: !input temp_sensor_id
   radiator_covered_state: >
     {{ states(
