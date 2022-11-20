@@ -1,0 +1,49 @@
+blueprint:
+  domain: automation
+  name: Popp TRV Room Load Balancing
+  description: > 
+    Calculate and send room mean load every 15min to
+    load balance TRVs in the same room, via zigbee2mqtt.
+    Uses Danfoss recommended calculation.
+  input:
+    popp_devices:
+      name: Popp TRV Device
+      description: Select all Popp TRVs located in the same room
+      selector:
+        device:
+          entity:
+            domain: climate
+          multiple: true
+variables:
+  devices: !input popp_devices
+  devices_all_entities: "{{ devices|map('device_entities')|sum(start=[]) }}"
+  room_load_mean: >
+    {% set load_estimate_entities = devices_all_entities
+    |select('match', 'sensor.*_load_estimate$') %}
+    {% set valid_states = expand(load_estimate_entities)
+    |selectattr('last_changed', 'ge', now() - timedelta(minutes = 90))
+    |map(attribute="state")|map("int",-8000)|select("ge",-500)|list %}
+    {% if valid_states|count == 0 %}
+      Unknown
+    {% else %}
+      {{ (valid_states|sum / valid_states|count) | round }}
+    {% endif %}
+  target_load_room_mean_entities: >
+    {{
+      devices_all_entities
+      |select('match', 'number.*_load_room_mean$')
+      |list
+    }}
+trigger:
+  - platform: time_pattern
+    minutes: /15
+condition:
+  - condition: template
+    value_template: "{{ is_number(room_load_mean) }}"
+action:
+- service: number.set_value
+  target:
+    entity_id: "{{ target_load_room_mean_entities }}"
+  data:
+    value: "{{ room_load_mean }}"
+mode: single
