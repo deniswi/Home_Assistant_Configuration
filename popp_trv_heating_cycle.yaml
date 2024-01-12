@@ -1,0 +1,358 @@
+blueprint:
+  domain: automation
+  name: Popp TRV automatic heating cycles
+  description: Update Danfoss Ally TRV external temperature with min/max refresh rate, via zigbee2mqtt
+  input:
+    ally_device:
+      name: Ally TRV Device
+      description: Temperature reading will be sent to this device
+      selector:
+        device:
+          manufacturer: Danfoss
+          entity:
+            domain: climate
+    temp_sensor_id:
+      name: Temperature Sensor
+      description: External sensor from which the temperature will be read. Expects data format 12.3
+      selector:
+        entity:
+          domain: sensor
+          device_class: temperature
+    max_update_timer_id:
+      name: Timer entity
+      description: >
+        Timer that will trigger at maximum update interval
+        if source sensor has not changed.
+        Sets automatically to 30min for covered, 3h for uncovered
+        Use separate timer for each automation.
+      selector:
+        entity:
+          domain: timer
+variables:
+  device: !input ally_device
+  temp_sensor_id: !input temp_sensor_id
+  radiator_covered_state: >
+    {{ states(
+    device_entities(device)
+    |select('match', '.*radiator_covered$')|first) }}
+  min_update_minutes: >
+    {% if radiator_covered_state == 'off' %}
+      30
+    {% else %}
+      5
+    {% endif %}
+  max_update_minutes: >
+    {% if radiator_covered_state == 'off' %}
+      180
+    {% else %}
+      30
+    {% endif %}
+trigger:
+- platform: state
+  entity_id: !input temp_sensor_id
+- platform: event
+  event_type: timer.finished
+  event_data:
+    entity_id: !input max_update_timer_id
+condition:
+- condition: template
+  value_template: >
+    {{ as_timestamp(now())
+    - as_timestamp(state_attr(this.entity_id,'last_triggered'),0)
+    > 60 * min_update_minutes }}
+action:
+- service: mqtt.publish
+  data:
+    topic: "zigbee2mqtt/{{ device_attr(device, 'name') }}/set/external_measured_room_sensor"
+    payload_template: "{{ (states(temp_sensor_id) | float * 100) | round(0) }}"
+- service: timer.start
+  target:
+    entity_id: !input max_update_timer_id
+  data:
+    duration: "{{ max_update_minutes * 60 }}"
+mode: single
+
+blueprint:
+  name: ECO Heating Ultimate v1.1
+  description: "# ECO Heating Ultimate\nControl your Thermostat heating Schedule
+    Entities by various Factors like Global Presence, Room Presence, etc.
+    \n\nFor Details see this Blog
+    post:\nhttps://www.simon42.com/home-assistant-heizung-smart-machen-better-thermostat\n\nCapabilitys:\n - Trigger on Presence Change (or any
+    other Input Boolean)\n - Wait time for turning off\n - Only Set Comfort Temprature
+    if entity is in desired state (optional)\n
+    - 4 Slots with individual Temprature Settings for different times of day (optional)\n"
+  domain: automation
+  source_url: https://gist.github.com/TheRealSimon42/3b783cf34cf3185ada8dfa0ff67249c5
+  input:
+    climate_entities:
+      name: Popp TRV entity
+      description: The Popp TRV entities that will be used for this room
+      selector:
+        device:
+          manufacturer: Popp
+          entity:
+            domain: climate
+            multiple: true
+    presence_detector:
+      name: Presence Detector
+      description: Only run if this boolean is true (Normally this is set to a Entity which reflects if someone is currently at home)
+      default:
+      selector:
+        entity:
+          domain: [binary_sensor, input_boolean]
+    no_presence_wait:
+      name: Wait time
+      description: Time to wait before setting the away temprature if the presence detector changes to false (Nobody is home anymore).
+      default: 120
+      selector:
+        number:
+          min: 0
+          max: 3600
+          unit_of_measurement: seconds
+    away_temprature:
+      name: Away Temprature
+      description: This is the temperature which is set when nobody is at home (Input Boolean above)
+      default: 18
+      selector:
+        number:
+          min: 5
+          max: 25
+          unit_of_measurement: temperature
+    default_temprature:
+      name: Default Temprature
+      description: This is the temparture which is set when someone is at home (Input Boolean above) and no other Temprature is set for the given tiemframe.
+      default: 20
+      selector:
+        number:
+          min: 5
+          max: 25
+          unit_of_measurement: temperature
+    window_contact:
+      name: Window Contact (Optional)
+      description: Do not set temprature if Window Contact is in chosen state (see next input)
+      default:
+      selector:
+        entity:
+          domain: [binary_sensor, input_boolean]
+    window_contact_boolean:
+      name: Window Contact Chooser (Optional)
+      description: Unwanted state of Window Contact, choose on for on and off for off (On is the most common case here)
+      default: true
+      selector:
+        boolean: 
+    automation_blocker:
+      name: Automation Blocker (Optional)
+      description: Only run if this boolean is in desired state (see next input)
+      default:
+      selector:
+        entity:
+          domain: [binary_sensor, input_boolean]
+    automation_blocker_boolean:
+      name: Automation Blocker Chooser (Optional)
+      description: Desired state of automation blocker, choose on for on and off for off
+      default: false
+      selector:
+        boolean: 
+    time_morning:
+      name: Time setting for morning
+      description: A time input which defines the time from which on the temperature settings will be enabled when someone is at home.
+      default: "06:30:00"
+      selector:
+        time:
+    morning_temprature:
+      name: Temprature setting for mornung
+      description: This is the temperature which should normally be set for this timeframe (when someone is at home).
+      default: 19
+      selector:
+        number:
+          min: 5
+          max: 25
+          unit_of_measurement: temperature
+    time_day:
+      name: Time setting for day
+      description: A time input which defines the time from which on the temperature settings will be enabled when someone is at home.
+      default: "08:00:00"
+      selector:
+        time:
+    day_temprature:
+      name: Temperature setting for day
+      description: This is the temperature which should normally be set for this timeframe (when someone is at home).
+      default: 21
+      selector:
+        number:
+          min: 5
+          max: 25
+          unit_of_measurement: temperature
+    time_evening:
+      name: Time setting for evening
+      description: A time input which defines the time from which on the temperature settings will be enabled when someone is at home.
+      default: "18:00:00"
+      selector:
+        time:
+    evening_temprature:
+      name: Temperature setting for evening
+      description: This is the temperature which should normally be set for this timeframe (when someone is at home).
+      default: 20
+      selector:
+        number:
+          min: 5
+          max: 25
+          unit_of_measurement: temperature
+    time_night:
+      name: Time setting for night
+      description: A time input which defines the time from which on the temperature Settings will be enabled when someone is at home.
+      default: "22:00:00"
+      selector:
+        time:
+    night_temprature:
+      name: Temperature setting for night
+      description: This is the temperature which should normally be set for this timeframe (when someone is at home).
+      default: 17
+      selector:
+        number:
+          min: 5
+          max: 25
+          unit_of_measurement: temperature
+mode: restart
+max_exceeded: silent
+variables:
+  climate_entities: !input climate_entities
+  presence_detector: !input presence_detector
+  away_temprature: !input away_temprature
+  default_temprature: !input default_temprature
+  automation_blocker: !input automation_blocker
+  automation_blocker_boolean : !input automation_blocker_boolean
+  window_contact: !input window_contact
+  window_contact_boolean : !input window_contact_boolean
+  morning_temprature: !input morning_temprature
+  day_temprature: !input day_temprature
+  evening_temprature: !input evening_temprature
+  night_temprature: !input night_temprature
+
+trigger:
+  # All state triggers
+  - platform: state
+    entity_id: !input presence_detector
+    from: "off"
+    to: "on"
+  - platform: state
+    entity_id: !input presence_detector
+    from: "on"
+    to: "off"
+    for: !input no_presence_wait
+  # Time pattern trigger
+  - platform: time_pattern
+    minutes: /1
+  # Time frame triggers
+  - platform: time
+    at: !input time_morning
+  - platform: time
+    at: !input time_day
+  - platform: time
+    at: !input time_evening
+  - platform: time
+    at: !input time_night
+
+condition:
+- condition: or
+  conditions:
+  - '{{ automation_blocker == none }}'
+  - '{{ automation_blocker_boolean and states[automation_blocker].state == ''on''
+    }}'
+  - '{{ not automation_blocker_boolean and states[automation_blocker].state == ''off''
+    }}'
+
+action:
+  - choose:
+      - conditions:
+        - condition: or
+        # Window open
+          conditions:
+            - '{{ window_contact != none and (window_contact_boolean and states[window_contact].state == ''on'')
+              }}'
+            - '{{ window_contact != none and (not window_contact_boolean and states[window_contact].state == ''off'')
+              }}'
+        sequence: []
+      - conditions:
+          - condition: state
+          # Nobody at home
+            entity_id: !input presence_detector
+            state: "off"
+        repeat:
+        for_each: "{{climate_entities}}"
+        sequence:
+          - service: climate.set_temperature
+            data:
+              temperature: "{{away_temprature}}"
+            target:
+              entity_id: "{{repeat.item}}"
+    # Morning time frame
+      - conditions:
+          - condition: time
+            after: !input time_morning
+            before: !input time_day
+        repeat:
+        for_each: "{{climate_entities}}"
+        sequence:
+          - service: climate.set_temperature
+            data:
+              temperature: "{{morning_temprature}}"
+            target:
+              entity_id: "{{repeat.item}}"
+    # END Morning Timeframe
+    # Day Timeframe
+      - conditions:
+          - condition: time
+            after: !input time_day
+            before: !input time_evening
+        repeat:
+        for_each: "{{climate_entities}}"
+        sequence:
+          - service: climate.set_temperature
+            data:
+              temperature: "{{day_temprature}}"
+            target:
+              entity_id: "{{repeat.item}}"
+    # END Day Timeframe
+    # Evening Timeframe
+      - conditions:
+          - condition: time
+            after: !input time_evening
+            before: !input time_night
+        repeat:
+        for_each: "{{climate_entities}}"
+        sequence:
+          - service: climate.set_temperature
+            data:
+              temperature: "{{evening_temprature}}"
+            target:
+              entity_id: "{{repeat.item}}"
+    # END Evening Timeframe
+    # Night Timeframe
+      - conditions:
+          - condition: time
+            after: !input time_night
+            before: !input time_morning
+        repeat:
+        for_each: "{{climate_entities}}"
+        sequence:
+          - condition: not
+            conditions:
+              - condition: template
+                value_template: '{{ (state_attr(repeat.item, ''temperature'') | float(0)) == night_temprature }}'
+          - service: climate.set_temperature
+            data:
+              temperature: "{{night_temprature}}"
+            target:
+              entity_id: !input climate_entity
+    # END Night Timeframe
+    default:
+      - condition: not
+        conditions:
+          - condition: template
+            value_template: '{{ (state_attr(climate_entity_var, ''temperature'') | float(0)) == eco_temprature }}'
+      - service: climate.set_temperature
+        data:
+          temperature: !input eco_temprature
+        target:
+          entity_id: !input climate_entity
